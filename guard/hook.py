@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from guard.cli import receipt
+from guard.integrity import inspect as inspect_binary
 from guard.policy import evaluate, load_policy, DEFAULT_POLICY
 from guard.shadow import compare_native, shadow_record
 
@@ -42,6 +43,17 @@ def native_dual_decision(python_decision, comparison):
     }
 
 
+def verified_native_comparison(action, python_decision, executable, policy_path, expected_sha256):
+    if not executable:
+        return {'status': 'error', 'reason': 'Native executable not configured'}
+    if not expected_sha256:
+        return {'status': 'error', 'reason': 'Expected native SHA-256 not configured'}
+    integrity = inspect_binary(executable, expected_sha256)
+    if integrity.get('status') != 'pass':
+        return {'status': 'error', 'reason': 'Native binary integrity verification failed'}
+    return compare_native(action, python_decision, executable, policy_path)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -49,18 +61,21 @@ def main():
         policy = load_policy(policy_path)
         python_decision, action = process(payload, policy)
         mode = os.getenv('AGENT_GUARD_MODE', 'python')
-        if mode not in ('python', 'native_dual'):
+        if mode not in ('python', 'native_dual', 'native_verified'):
             raise ValueError('Invalid guard mode')
         final_decision = python_decision
-        executable = os.getenv('AGENT_GUARD_NATIVE_GATE') if mode == 'native_dual' else os.getenv('AGENT_GUARD_NATIVE_SHADOW')
-        if mode == 'native_dual' or executable:
-            comparison = compare_native(action, python_decision, executable, policy_path) if executable else {'status': 'error', 'reason': 'Native executable not configured'}
-            if mode == 'native_dual':
+        executable = os.getenv('AGENT_GUARD_NATIVE_GATE') if mode in ('native_dual', 'native_verified') else os.getenv('AGENT_GUARD_NATIVE_SHADOW')
+        if mode in ('native_dual', 'native_verified') or executable:
+            if mode == 'native_verified':
+                comparison = verified_native_comparison(action, python_decision, executable, policy_path, os.getenv('AGENT_GUARD_NATIVE_EXPECTED_SHA256'))
+            else:
+                comparison = compare_native(action, python_decision, executable, policy_path) if executable else {'status': 'error', 'reason': 'Native executable not configured'}
+            if mode in ('native_dual', 'native_verified'):
                 final_decision = native_dual_decision(python_decision, comparison)
             try:
                 append_receipt(shadow_record(action, comparison), os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
             except (OSError, ValueError, TypeError) as error:
-                if mode == 'native_dual':
+                if mode in ('native_dual', 'native_verified'):
                     raise
                 print('Mac Agent Security Guard shadow comparison unavailable: ' + type(error).__name__, file=sys.stderr)
         record = receipt(action, final_decision, os.getenv('GUARD_RECEIPT_KEY'))
