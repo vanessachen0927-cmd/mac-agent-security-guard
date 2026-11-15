@@ -30,16 +30,16 @@ def append_receipt(record, path):
         stream.write(json.dumps(record, sort_keys=True) + '\n')
 
 
-def run_shadow(action, decision, policy_path):
-    executable = os.getenv('AGENT_GUARD_NATIVE_SHADOW')
-    if not executable:
-        return
-    try:
-        result = compare_native(action, decision, executable, policy_path)
-        record = shadow_record(action, result)
-        append_receipt(record, os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
-    except (OSError, ValueError, TypeError) as error:
-        print('Mac Agent Security Guard shadow comparison unavailable: ' + type(error).__name__, file=sys.stderr)
+def native_dual_decision(python_decision, comparison):
+    if comparison.get('status') == 'match':
+        native = comparison.get('native_decision')
+        if native == python_decision and native.get('verdict') in ('allow', 'deny'):
+            return native
+    return {
+        'verdict': 'deny',
+        'rule_id': 'native_parity_failure',
+        'reason': 'Native policy check failed or disagreed with Python'
+    }
 
 
 def main():
@@ -47,13 +47,26 @@ def main():
         payload = json.load(sys.stdin)
         policy_path = pathlib.Path(os.environ['AGENT_GUARD_POLICY']) if os.getenv('AGENT_GUARD_POLICY') else DEFAULT_POLICY
         policy = load_policy(policy_path)
-        decision, action = process(payload, policy)
-        record = receipt(action, decision, os.getenv('GUARD_RECEIPT_KEY'))
+        python_decision, action = process(payload, policy)
+        mode = os.getenv('AGENT_GUARD_MODE', 'python')
+        if mode not in ('python', 'native_dual'):
+            raise ValueError('Invalid guard mode')
+        final_decision = python_decision
+        executable = os.getenv('AGENT_GUARD_NATIVE_GATE') if mode == 'native_dual' else os.getenv('AGENT_GUARD_NATIVE_SHADOW')
+        if mode == 'native_dual' or executable:
+            if executable:
+                comparison = compare_native(action, python_decision, executable, policy_path)
+            else:
+                comparison = {'status': 'error', 'reason': 'Native executable not configured'}
+            if mode == 'native_dual':
+                final_decision = native_dual_decision(python_decision, comparison)
+            comparison_record = shadow_record(action, comparison)
+            append_receipt(comparison_record, os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
+        record = receipt(action, final_decision, os.getenv('GUARD_RECEIPT_KEY'))
         append_receipt(record, os.getenv('AGENT_GUARD_LOG', '~/.mac-agent-security-guard/receipts.jsonl'))
-        run_shadow(action, decision, policy_path)
-        if decision['verdict'] == 'allow':
+        if final_decision['verdict'] == 'allow':
             return 0
-        print('Mac Agent Security Guard blocked Bash: ' + decision['reason'] + ' (' + decision['rule_id'] + ')', file=sys.stderr)
+        print('Mac Agent Security Guard blocked Bash: ' + final_decision['reason'] + ' (' + final_decision['rule_id'] + ')', file=sys.stderr)
         return 2
     except (ValueError, KeyError, OSError, TypeError, json.JSONDecodeError) as error:
         print('Mac Agent Security Guard blocked Bash: hook validation or logging failed: ' + type(error).__name__, file=sys.stderr)
