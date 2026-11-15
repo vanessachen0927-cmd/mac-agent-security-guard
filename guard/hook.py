@@ -33,7 +33,7 @@ def append_receipt(record, path):
 def native_dual_decision(python_decision, comparison):
     if comparison.get('status') == 'match':
         native = comparison.get('native_decision')
-        if native == python_decision and native.get('verdict') in ('allow', 'deny'):
+        if isinstance(native, dict) and native == python_decision and native.get('verdict') in ('allow', 'deny'):
             return native
     return {
         'verdict': 'deny',
@@ -54,14 +54,15 @@ def main():
         final_decision = python_decision
         executable = os.getenv('AGENT_GUARD_NATIVE_GATE') if mode == 'native_dual' else os.getenv('AGENT_GUARD_NATIVE_SHADOW')
         if mode == 'native_dual' or executable:
-            if executable:
-                comparison = compare_native(action, python_decision, executable, policy_path)
-            else:
-                comparison = {'status': 'error', 'reason': 'Native executable not configured'}
+            comparison = compare_native(action, python_decision, executable, policy_path) if executable else {'status': 'error', 'reason': 'Native executable not configured'}
             if mode == 'native_dual':
                 final_decision = native_dual_decision(python_decision, comparison)
-            comparison_record = shadow_record(action, comparison)
-            append_receipt(comparison_record, os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
+            try:
+                append_receipt(shadow_record(action, comparison), os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
+            except (OSError, ValueError, TypeError) as error:
+                if mode == 'native_dual':
+                    raise
+                print('Mac Agent Security Guard shadow comparison unavailable: ' + type(error).__name__, file=sys.stderr)
         record = receipt(action, final_decision, os.getenv('GUARD_RECEIPT_KEY'))
         append_receipt(record, os.getenv('AGENT_GUARD_LOG', '~/.mac-agent-security-guard/receipts.jsonl'))
         if final_decision['verdict'] == 'allow':
