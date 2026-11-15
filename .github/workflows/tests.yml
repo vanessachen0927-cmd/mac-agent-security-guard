@@ -9,3 +9,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s tests -v
+  native-parity:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -p test_native_parity.py -v
