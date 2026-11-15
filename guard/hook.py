@@ -6,7 +6,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from guard.cli import receipt
-from guard.policy import evaluate, load_policy
+from guard.policy import evaluate, load_policy, DEFAULT_POLICY
+from guard.shadow import compare_native, shadow_record
 
 
 def process(payload, policy):
@@ -29,13 +30,27 @@ def append_receipt(record, path):
         stream.write(json.dumps(record, sort_keys=True) + '\n')
 
 
+def run_shadow(action, decision, policy_path):
+    executable = os.getenv('AGENT_GUARD_NATIVE_SHADOW')
+    if not executable:
+        return
+    try:
+        result = compare_native(action, decision, executable, policy_path)
+        record = shadow_record(action, result)
+        append_receipt(record, os.getenv('AGENT_GUARD_SHADOW_LOG', '~/.mac-agent-security-guard/shadow.jsonl'))
+    except (OSError, ValueError, TypeError) as error:
+        print('Mac Agent Security Guard shadow comparison unavailable: ' + type(error).__name__, file=sys.stderr)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
-        policy = load_policy(os.environ['AGENT_GUARD_POLICY']) if os.getenv('AGENT_GUARD_POLICY') else load_policy()
+        policy_path = pathlib.Path(os.environ['AGENT_GUARD_POLICY']) if os.getenv('AGENT_GUARD_POLICY') else DEFAULT_POLICY
+        policy = load_policy(policy_path)
         decision, action = process(payload, policy)
         record = receipt(action, decision, os.getenv('GUARD_RECEIPT_KEY'))
         append_receipt(record, os.getenv('AGENT_GUARD_LOG', '~/.mac-agent-security-guard/receipts.jsonl'))
+        run_shadow(action, decision, policy_path)
         if decision['verdict'] == 'allow':
             return 0
         print('Mac Agent Security Guard blocked Bash: ' + decision['reason'] + ' (' + decision['rule_id'] + ')', file=sys.stderr)
