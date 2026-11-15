@@ -1,45 +1,61 @@
 # Mac Agent Security Guard
 
-Local, deterministic AI-agent command policy evaluator with JSONL decision receipts and a SwiftUI receipt viewer prototype.
+Mac Agent Security Guard is an experimental macOS portfolio project for evaluating AI coding agent Bash tool proposals. It includes a Python policy and Claude Code hook, a native Swift deterministic evaluator, Python–Swift decision parity checks, SHA-256/HMAC audit receipts, native integrity verification, and a SwiftUI viewer for receipts and machine-health reports.
 
-## Run
+**Security scope:** A project-local hook prototype, not a production endpoint security application, macOS Endpoint Security extension, system-wide command sandbox, or notarized product.
+
+## Repository
+
+- `guard/`: policy evaluation, Claude Code hook, cryptographic receipts, health reporting, and native integrity checks
+- `native-gate/AgentGuardGate.swift`: native Swift command evaluation CLI
+- `MacAgentSecurityGuard/`: macOS SwiftUI app with Decision Receipts and Machine Health views
+- `examples/policy.json`: five representative allow/deny rules
+- `tests/`: Python security, parity, and failure-case tests
+- `scripts/`: local ad-hoc signing, release packaging, and disposable demo
+- `docs/release-demo.md`: release validation and 90-second demonstration guide
+
+## Test and demonstrate
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m guard.cli --command 'git status' --log receipts.jsonl
-python3 -m guard.cli --command 'rm -rf /tmp/example' --log receipts.jsonl
+bash scripts/build-local-signed.sh
+bash scripts/demo-local.sh
 ```
 
-The second command is denied and exits with status 2; commands are **never executed** by this tool.
+The test hook evaluates the supplied Bash command text, and **does not execute it**. The demo uses only disposable logs and a test HMAC key. A legitimate Claude Code session is not required for the simulated tests.
 
-To authenticate receipts with a local secret, set `GUARD_RECEIPT_KEY` before running the CLI. The receipt includes a SHA-256 digest of canonical JSON and an HMAC-SHA256 when a key is set. The HMAC does not provide independent, asymmetric countersigning.
-
-## macOS viewer
-
-Create a macOS SwiftUI app target in Xcode, replace the generated application source with `macos/AgentGuardApp.swift`, build, and select the receipt log via the app. The Swift source is provided but has not been compiled or signed in this environment.
-
-## Security scope and limitations
-
-This is a policy-engine prototype, **not an enforcement hook**, endpoint protection agent, notarized application, sandbox, signed binary, or Jamf/MDM deployment. It evaluates a single command string without executing it. It does not expand shells, resolve symlinks, inspect scripts, enforce OS filesystem restrictions, prevent bypasses, or fully identify secrets embedded in command arguments. `git` rule matching is intentionally simple and must not be trusted against malicious adversaries. Deploying this as a security boundary requires a trusted agent interception point, path normalization, policy authentication, fail-closed operations, platform controls, and independent security review.
-
-## Claude Code PreToolUse integration
-
-The project now includes a project-local Claude Code Bash `PreToolUse` hook. Run from this repository:
+To generate a current machine-health report for the SwiftUI viewer:
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m guard.posture > /tmp/mac-agent-health.json
+```
+
+## Package a local development release
+
+On Apple Silicon macOS with Xcode installed:
+
+```bash
+bash scripts/package-macos-dev.sh
+```
+
+If Xcode builds successfully, the script creates an unsigned macOS application and ad-hoc-signed Swift CLI in a ZIP under `build/releases/`. This is **not a notarized or Developer ID signed release**. It is a local development build intended for demonstrations.
+
+See [the release and demo guide](docs/release-demo.md) for use, verification, limitations, and rollback.
+
+## Claude Code integration
+
+A project-local Bash PreToolUse hook can be configured with:
+
+```bash
 python3 -m guard.install_hook
 ```
 
-After accepting or verifying the generated `.claude/settings.local.json`, restart Claude Code within this repository. The hook runs `guard/hook.py` before Claude Code's Bash tool. A denied action exits with code 2 and a readable reason; permitted actions exit with code 0, which leaves normal Claude Code permissions in effect. The hook never executes the requested command itself.
+Review the generated `.claude/settings.local.json` before launching Claude Code. By default, the hook uses the Python evaluator. An opt-in native dual-consensus mode compares Python and Swift decisions, and `native_verified` additionally checks a configured native binary digest and macOS code signature before native evaluation. The native executable does not independently intercept tool calls.
 
-Test the hook without Claude Code:
+The hook only applies to relevant Claude Code Bash events when configured in this project; it does not cover Write/Edit, other agents, Terminal commands, or arbitrary shell execution. User-editable hooks can be bypassed, and the simplistic command-string policy is not a trusted shell parser.
 
-```bash
-printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"},"cwd":"/tmp/example"}' | python3 guard/hook.py
-printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/example"},"cwd":"/tmp/example"}' | python3 guard/hook.py
-```
+## Security boundaries
 
-The second test exits with code 2 and **does not execute the command**. Receipts are stored in `~/.mac-agent-security-guard/receipts.jsonl`, with restrictive permissions for newly created files. Because receipts record raw command text, do not test with real secrets. The generated Claude settings are local to this repository and are not meant for production installation.
+Audit receipts may contain raw proposed commands, so avoid using actual secrets in demonstrations. An HMAC receipt is authenticated only when verified using a separately held secret key. Local ad-hoc signatures do not authenticate developer identity. A hash next to a binary is not a protected trust root, and the native integrity check does not eliminate check-to-execution races.
 
-This hook covers **only Claude Code Bash calls within this repository**. It does not intercept Claude Code's Write/Edit tools, other agents, other apps, direct Terminal commands, shell scripts launched indirectly, or actions taken outside the hook. Shell syntax screening is intentionally conservative but is not a secure shell parser. A hook can be disabled or bypassed by users or tools with sufficient access. Never treat it as a system-wide security boundary.
+No live Claude Code authentication test, independent native security extension, Apple Developer ID signing, notarization, or fleet-management deployment is claimed.
