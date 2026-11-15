@@ -1,0 +1,10 @@
+{
+  "default_verdict": "deny",
+  "rules": [
+    {"id": "deny_delete", "executables": ["rm", "shred"], "verdict": "deny", "reason": "Destructive file removal requires manual review"},
+    {"id": "deny_credential_access", "executables": ["cat", "cp", "mv", "less", "head", "tail"], "argument_patterns": ["*.ssh/*", "*.aws/*", "*.env", "*.pem", "*id_rsa*"], "verdict": "deny", "reason": "Protected credential path"},
+    {"id": "allow_git_status", "executables": ["git"], "argument_patterns": ["status"], "verdict": "allow", "reason": "Read-only repository inspection"},
+    {"id": "allow_pwd", "executables": ["pwd"], "verdict": "allow", "reason": "Working directory inspection"},
+    {"id": "allow_ls", "executables": ["ls"], "verdict": "allow", "reason": "Directory listing"}
+  ]
+}
